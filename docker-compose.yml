@@ -1,0 +1,92 @@
+services:
+  mimir:
+    image: grafana/mimir:latest
+    command: [-config.file=/etc/mimir/config.yaml]
+    volumes:
+      - ./mimir/config.yaml:/etc/mimir/config.yaml
+    ports:
+      - "9009:9009"
+
+  loki:
+    image: grafana/loki:latest
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+    volumes:
+      - ./loki/chunks:/loki/chunks/
+      - ./loki/rules:/loki/rules/
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  tempo:
+    image: grafana/tempo:latest
+    command: [-config.file=/etc/tempo/config.yml]
+    volumes:
+      - ./tempo/config.yml:/etc/tempo/config.yml
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - app_logs:/var/log/app:ro 
+    ports:
+      - "12345:12345"
+      - "9411:9411"
+    extra_hosts:  # Esto es importante para acceder al localhost
+      - "host.docker.internal:host-gateway"
+    command: >
+      run
+      --server.http.listen-addr=0.0.0.0:12345
+      --storage.path=/var/lib/alloy/data
+      /etc/alloy/config.alloy
+
+
+#apps pors  test
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres-image
+    environment:
+      POSTGRES_DB: reservation
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+
+  app:
+    build:
+      context: /home/skyblue/Desktop/free/inmobiliaria-api
+      dockerfile: Dockerfile
+    container_name: reservation_app
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/reservation
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: adminpassword
+      LOGGING_FILE_NAME: /var/log/app/application.log
+    ports:
+      - 8080:8080
+    depends_on:
+      - postgres
+    volumes:
+      - app_logs:/var/log/app 
+
+volumes:
+  postgres_data:
+  app_logs:
+

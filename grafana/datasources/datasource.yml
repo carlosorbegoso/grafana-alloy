@@ -1,0 +1,117 @@
+apiVersion: 1
+
+datasources:
+ - name: Mimir
+   type: prometheus
+   uid: prometheus
+   access: proxy
+   url: http://mimir:9009/prometheus
+   jsonData:
+     httpMethod: POST
+     exemplarTraceIdDestinations:
+       - name: traceID
+         datasourceUid: tempo
+     queryTimeout: 30s
+
+ - name: Loki
+   type: loki
+   uid: loki
+   access: proxy
+   url: http://loki:3100
+   jsonData:
+     maxLines: 1000
+     derivedFields:
+       - name: traceId
+         matcherRegex: '\[([a-f0-9]+),[a-f0-9]+\]'
+         url: '/explore?left=["now-1h","now","Tempo",{"query":"$${__value.raw}"}]'
+         datasourceUid: tempo
+       - name: spanId
+         matcherRegex: '\[[a-f0-9]+,([a-f0-9]+)\]'
+         url: '/explore?left=["now-1h","now","Tempo",{"query":"$${__value.raw}"}]'
+         datasourceUid: tempo
+     search:
+       hide: false
+     timeInterval: '5s'
+
+ - name: Tempo
+   type: tempo
+   uid: tempo
+   access: proxy
+   url: http://tempo:3200
+   jsonData:
+     httpMethod: GET
+     tracesToMetrics:
+       datasourceUid: 'prometheus'
+       spanStartTimeShift: '1h'
+       spanEndTimeShift: '-1h'
+       tags:
+         - { key: 'service.name', value: '' }
+         - { key: 'http.method', value: '' }
+         - { key: 'http.status_code', value: '' }
+       queries:
+         - name: 'Request Rate'
+           query: 'sum(rate(http_server_requests_seconds_count{}[5m])) by (service_name)'
+         - name: 'Error Rate'
+           query: 'sum(rate(http_server_requests_seconds_count{status!~"2.."}[5m])) by (service_name)'
+         - name: 'Latency'
+           query: 'histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{}[5m])) by (le, service_name))'
+     tracesToLogsV2:
+       datasourceUid: 'loki'
+       filterByTraceID: true
+       filterBySpanID: false
+       spanStartTimeShift: '-1h'
+       spanEndTimeShift: '1h'
+       tags: ['container_name', 'app', 'job', 'instance']
+       customQuery: true
+       query: '{app=~".+"}|~ "\\[$${__trace.traceId},[a-f0-9]+\\]"'
+       searchBy:
+         - name: "Trace ID"
+           tag: "traceId"
+           default: "$${__trace.traceId}"
+           type: "traces"
+         - name: "Error Logs"
+           query: '{level="ERROR"} |~ "\\[$${__trace.traceId}"'
+           type: "logs"
+         - name: "All Related Logs"
+           query: '{app=~".+"} |~ "\\[$${__trace.traceId}"'
+           type: "logs"
+         - name: "Service Logs"
+           query: '{container_name=~".*$${__span.service.name}.*"} |~ "\\[$${__trace.traceId}"'
+           type: "logs"
+     serviceMap:
+       datasourceUid: 'prometheus'
+     nodeGraph:
+       enabled: true
+       showLegend: true
+     search:
+       hide: false
+     spanBar:
+       type: 'Tag'
+       tag: 'http.path'
+
+templating:
+ list:
+   - name: service
+     type: query
+     query: 'label_values(service_name)'
+     datasource: Mimir
+     refresh: 1
+   - name: instance
+     type: query
+     query: 'label_values(instance)'
+     datasource: Mimir
+     refresh: 1
+   - name: container
+     type: query
+     query: 'label_values(container_name)'
+     datasource: Loki
+     refresh: 1
+   - name: status
+     type: query
+     query: 'label_values(status)'
+     datasource: Mimir
+     refresh: 1
+
+query_cache:
+ enabled: true
+ expiration: 30s
